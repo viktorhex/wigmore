@@ -5,16 +5,22 @@ import { parseWigmoreText } from './utils/parseWigmoreText';
 const App: React.FC = () => {
   const textInput = `
 Nodes:
-E1 | Witness testimony | evidence
-E2 | Documentary evidence | evidence
-I1 | Inference of guilt | inference
-C1 | Defendant is guilty | conclusion
-E3 | Contradictory testimony | evidence
+C1 | Man was involved in stabbing | conclusion | belief: ··
+E1 | Blood on man's cloak | evidence | source: *
+E2 | Neighbor testifies man is atheist | evidence | source: *
+E3 | Doctor testifies man's nose is sound | evidence | source: *
+X1 | Cloak stained from chicken sacrifice | explanation
+X2 | Cloak stained from nosebleed | explanation
+R1 | Man did not sacrifice chicken | refutation
+R2 | Man did not have nosebleed | refutation
 Edges:
-E1 -> I1 | support
-E2 -> I1 | support
-I1 -> C1 | support
-E3 -> I1 | contradict
+E1 -> C1 | support | strength: strong
+X1 -> C1 | explain | strength: weak
+X2 -> C1 | explain | strength: weak
+R1 -> X1 | refute | strength: strong
+R2 -> X2 | refute | strength: strong
+E2 -> R1 | support
+E3 -> R2 | support
 `;
 
   const wigmoreData = parseWigmoreText(textInput);
@@ -22,7 +28,7 @@ E3 -> I1 | contradict
   return (
     <div>
       <h1>Wigmore Chart Visualization</h1>
-      <WigmoreChart data={wigmoreData} width={800} height={800} />
+      <WigmoreChart data={wigmoreData} width={1000} height={800} />
     </div>
   );
 };
