@@ -1,7 +1,6 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import * as d3 from 'd3';
 import { hierarchy, tree, type HierarchyPointNode } from 'd3-hierarchy';
-import './WigmoreChart.css';
 
 interface Node {
   id: string;
@@ -11,8 +10,8 @@ interface Node {
 }
 
 interface Edge {
-  source: string | Node;
-  target: string | Node;
+  source: string;
+  target: string;
   type: 'support' | 'contradict';
 }
 
@@ -53,8 +52,8 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({
         edge.target !== undefined &&
         edge.type !== undefined &&
         ['support', 'contradict'].includes(edge.type) &&
-        (typeof edge.source === 'string' ? validNodeIds.has(edge.source) : 'id' in edge.source && validNodeIds.has(edge.source.id)) &&
-        (typeof edge.target === 'string' ? validNodeIds.has(edge.target) : 'id' in edge.target && validNodeIds.has(edge.target.id))
+        validNodeIds.has(edge.source) &&
+        validNodeIds.has(edge.target)
     );
 
     // Build node map for easy lookup
@@ -66,10 +65,8 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({
 
     // Build hierarchy (target is parent, source is child)
     validEdges.forEach(edge => {
-      const sourceId = typeof edge.source === 'string' ? edge.source : edge.source.id;
-      const targetId = typeof edge.target === 'string' ? edge.target : edge.target.id;
-      const sourceNode = nodeMap.get(sourceId);
-      const targetNode = nodeMap.get(targetId);
+      const sourceNode = nodeMap.get(edge.source);
+      const targetNode = nodeMap.get(edge.target);
       if (sourceNode && targetNode) {
         if (!targetNode.children) targetNode.children = [];
         if (!targetNode.children.includes(sourceNode)) {
@@ -105,7 +102,7 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({
     svg.append('defs').append('marker')
       .attr('id', 'arrow')
       .attr('viewBox', '0 -5 10 10')
-      .attr('refX', 10)
+      .attr('refX', 15) // Increased refX to stop arrow short of the node
       .attr('refY', 0)
       .attr('markerWidth', 6)
       .attr('markerHeight', 6)
@@ -131,8 +128,10 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({
 
     console.log('Hierarchy After Layout:', rootHierarchy);
 
-    // Draw edges (paths)
-    const edge = g.selectAll('.edge')
+    // Draw edges (paths) first
+    const edgeGroup = g.append('g').attr('class', 'edges');
+
+    const edge = edgeGroup.selectAll('.edge')
       .data(rootHierarchy.links())
       .enter()
       .append('path')
@@ -147,35 +146,33 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({
       .attr('fill', 'none')
       .attr('stroke', d => {
         const edgeType = edges.find(
-          e => (typeof e.source === 'string' ? e.source : e.source.id) === d.target.data.id &&
-               (typeof e.target === 'string' ? e.target : e.target.id) === d.source.data.id
+          e => e.source === d.target.data.id && e.target === d.source.data.id
         )?.type;
         return edgeType === 'support' ? 'green' : 'red';
       })
-      .attr('stroke-width', 2)
+      .attr('stroke-width', 1.5) // Reduced stroke width to minimize overlap
       .attr('stroke-dasharray', d => {
         const edgeType = edges.find(
-          e => (typeof e.source === 'string' ? e.source : e.source.id) === d.target.data.id &&
-               (typeof e.target === 'string' ? e.target : e.target.id) === d.source.data.id
+          e => e.source === d.target.data.id && e.target === d.source.data.id
         )?.type;
         return edgeType === 'contradict' ? '5,5' : 'none';
       })
       .attr('marker-end', d => {
         const edgeType = edges.find(
-          e => (typeof e.source === 'string' ? e.source : e.source.id) === d.target.data.id &&
-               (typeof e.target === 'string' ? e.target : e.target.id) === d.source.data.id
+          e => e.source === d.target.data.id && e.target === d.source.data.id
         )?.type;
         return edgeType === 'support' ? 'url(#arrow)' : 'none';
       });
 
     // Add contradiction symbols ('x') on edges
-    const contradictSymbol = g.selectAll('.contradict-symbol')
+    const contradictSymbolGroup = g.append('g').attr('class', 'contradict-symbols');
+
+    contradictSymbolGroup.selectAll('.contradict-symbol')
       .data(rootHierarchy.links())
       .enter()
       .filter(d => {
         const edgeType = edges.find(
-          e => (typeof e.source === 'string' ? e.source : e.source.id) === d.target.data.id &&
-               (typeof e.target === 'string' ? e.target : e.target.id) === d.source.data.id
+          e => e.source === d.target.data.id && e.target === d.source.data.id
         )?.type;
         return edgeType === 'contradict';
       })
@@ -187,8 +184,10 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({
       .attr('fill', 'red')
       .text('x');
 
-    // Draw nodes
-    const node = g.selectAll<SVGGElement, HierarchyPointNode<Node>>('.node')
+    // Draw nodes after edges to ensure they appear on top
+    const nodeGroup = g.append('g').attr('class', 'nodes');
+
+    const node = nodeGroup.selectAll<SVGGElement, HierarchyPointNode<Node>>('.node')
       .data(rootHierarchy.descendants())
       .enter()
       .append('g')
@@ -268,45 +267,3 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({
 };
 
 export default WigmoreChart;
-
-export const parseWigmoreText = (text: string): WigmoreData => {
-    const lines = text.trim().split('\n');
-    let isNodesSection = false;
-    let isEdgesSection = false;
-    const nodes: Node[] = [];
-    const edges: Edge[] = [];
-  
-    for (const line of lines) {
-      if (line === 'Nodes:') {
-        isNodesSection = true;
-        isEdgesSection = false;
-        continue;
-      }
-      if (line === 'Edges:') {
-        isNodesSection = false;
-        isEdgesSection = true;
-        continue;
-      }
-  
-      if (isNodesSection) {
-        const [id, label, type] = line.split('|').map(s => s.trim());
-        if (
-          id &&
-          label &&
-          ['evidence', 'inference', 'conclusion'].includes(type)
-        ) {
-          nodes.push({ id, label, type: type as Node['type'] });
-        }
-      }
-  
-      if (isEdgesSection) {
-        const [sourceTarget, type] = line.split('|').map(s => s.trim());
-        const [source, target] = sourceTarget.split('->').map(s => s.trim());
-        if (source && target && ['support', 'contradict'].includes(type)) {
-          edges.push({ source, target, type: type as Edge['type'] });
-        }
-      }
-    }
-  
-    return { nodes, edges };
-  };

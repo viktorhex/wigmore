@@ -13,3 +13,7 @@
     fill: #333;
     pointer-events: none;
 }
+
+.node rect {
+    opacity: 0.9;
+}

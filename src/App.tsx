@@ -1,5 +1,6 @@
 import React from 'react';
-import WigmoreChart, { parseWigmoreText } from './WigmoreChart';
+import WigmoreChart from './WigmoreChart';
+import { parseWigmoreText } from './utils/parseWigmoreText';
 
 const App: React.FC = () => {
   const textInput = `
@@ -21,7 +22,7 @@ E3 -> I1 | contradict
   return (
     <div>
       <h1>Wigmore Chart Visualization</h1>
-      <WigmoreChart data={wigmoreData} width={800} height={600} />
+      <WigmoreChart data={wigmoreData} width={800} height={800} />
     </div>
   );
 };
