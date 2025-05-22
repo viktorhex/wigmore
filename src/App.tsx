@@ -1,19 +1,29 @@
-import './App.css'
-import BarChart from './BarChart'
+import React from 'react';
+import WigmoreChart, { parseWigmoreText } from './WigmoreChart';
 
-function App() {
-  const rawData = [10, '20', undefined, 30, '40', null, 50];
+const App: React.FC = () => {
+  const textInput = `
+Nodes:
+E1 | Witness testimony | evidence
+E2 | Documentary evidence | evidence
+I1 | Inference of guilt | inference
+C1 | Defendant is guilty | conclusion
+E3 | Contradictory testimony | evidence
+Edges:
+E1 -> I1 | support
+E2 -> I1 | support
+I1 -> C1 | support
+E3 -> I1 | contradict
+`;
 
-  const cleanData = rawData
-    .filter((d): d is number | string => d !== undefined && d !== null)
-    .map(d => +d)
-    .filter(d => !isNaN(d));
+  const wigmoreData = parseWigmoreText(textInput);
 
   return (
-    <>
-      <BarChart data={cleanData} />
-    </>
-  )
-}
+    <div>
+      <h1>Wigmore Chart Visualization</h1>
+      <WigmoreChart data={wigmoreData} width={800} height={600} />
+    </div>
+  );
+};
 
-export default App
+export default App;

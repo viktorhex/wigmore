@@ -1,0 +1,15 @@
+.edge {
+    stroke-opacity: 0.6;
+}
+
+.node circle,
+.node rect,
+.node path {
+    stroke: #fff;
+    stroke-width: 1.5px;
+}
+
+.node text {
+    fill: #333;
+    pointer-events: none;
+}
