@@ -25,6 +25,7 @@ interface Node {
     let isEdgesSection = false;
     const nodes: Node[] = [];
     const edges: Edge[] = [];
+    const nodeIds = new Set<string>();
   
     for (const line of lines) {
       if (line === 'Nodes:') {
@@ -57,13 +58,20 @@ interface Node {
             }
           });
           nodes.push(node);
+          nodeIds.add(id);
         }
       }
   
       if (isEdgesSection) {
         const [sourceTarget, type, ...attributes] = line.split('|').map(s => s.trim());
         const [source, target] = sourceTarget.split('->').map(s => s.trim());
-        if (source && target && ['support', 'explain', 'refute'].includes(type)) {
+        if (
+          source &&
+          target &&
+          nodeIds.has(source) &&
+          nodeIds.has(target) &&
+          ['support', 'explain', 'refute'].includes(type)
+        ) {
           const edge: Edge = { source, target, type: type as Edge['type'] };
           attributes.forEach(attr => {
             const [key, value] = attr.split(':').map(s => s.trim());

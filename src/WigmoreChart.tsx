@@ -1,6 +1,5 @@
 import React, { useRef, useEffect, useMemo } from 'react';
 import * as d3 from 'd3';
-import { hierarchy, tree, type HierarchyPointNode } from 'd3-hierarchy';
 
 interface Node {
   id: string;
@@ -8,7 +7,6 @@ interface Node {
   type: 'evidence' | 'inference' | 'conclusion' | 'explanation' | 'refutation';
   source?: '*' | 'q';
   belief?: '?' | '·' | '··' | '-' | 'oo';
-  children?: Node[];
 }
 
 interface Edge {
@@ -29,52 +27,26 @@ interface WigmoreChartProps {
   height?: number;
 }
 
-// Use React.FC and remove incorrect return type
 const WigmoreChart: React.FC<WigmoreChartProps> = ({ data, width = 1400, height = 4000 }) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const margin = { top: 200, right: 300, bottom: 200, left: 300 };
+  const chartWidth = width - margin.left - margin.right;
+  const chartHeight = height - margin.top - margin.bottom;
+  const nodeSpacing = 50; // Vertical spacing for readability
+  const horizontalOffset = 200; // For explain/refute edges
 
-  const { nodes, edges, root, nodeMap } = useMemo(() => {
-    const nodeMap = new Map<string, Node>();
-    data.nodes.forEach(node => nodeMap.set(node.id, { ...node, children: node.children || [] }));
-
-    const supportEdges = data.edges.filter(edge => edge.type === 'support');
-    supportEdges.forEach(edge => {
-      const sourceNode = nodeMap.get(edge.source);
-      const targetNode = nodeMap.get(edge.target);
-      if (sourceNode && targetNode) {
-        targetNode.children = targetNode.children || [];
-        if (!targetNode.children.includes(sourceNode)) targetNode.children.push(sourceNode);
-      }
-    });
-
-    const conclusionNode = nodeMap.get(data.nodes.find(node => node.type === 'conclusion')!.id);
-    const refuteNodes = data.edges
-      .filter(edge => edge.type === 'refute')
-      .map(edge => nodeMap.get(edge.source))
-      .filter(node => node && !node.children?.some(child => child.id === conclusionNode?.id));
-    refuteNodes.forEach(refuteNode => {
-      if (refuteNode && conclusionNode) {
-        conclusionNode.children = conclusionNode.children || [];
-        if (!conclusionNode.children.includes(refuteNode)) conclusionNode.children.push(refuteNode);
-      }
-    });
-
-    const rootNode = conclusionNode || nodeMap.get(data.nodes[0].id);
-    if(!rootNode) throw 'no rootNode';
-    const updatedRoot = { ...nodeMap.get(rootNode.id)!, children: [...(nodeMap.get(rootNode.id)!.children || [])] };
-
-    console.log('nodeMap entries:', Array.from(nodeMap.entries()).map(([id, node]) => ({ id, children: node.children?.map(c => c.id) })));
-
-    return { nodes: Array.from(nodeMap.values()), edges: data.edges, root: updatedRoot, nodeMap };
+  const { nodes, edges, nodeMap } = useMemo(() => {
+    const nodeMap = new Map<string, Node>(data.nodes.map(node => [node.id, { ...node }]));
+    return { nodes: data.nodes, edges: data.edges, nodeMap };
   }, [data]);
 
   useEffect(() => {
-    if (!svgRef.current || !root || nodes.length === 0) return;
+    if (!svgRef.current || nodes.length === 0) return;
 
     const svg = d3.select(svgRef.current).attr('width', width).attr('height', height);
     svg.selectAll('*').remove();
 
+    // Define arrow and cross markers
     svg.append('defs').append('marker')
       .attr('id', 'arrow')
       .attr('viewBox', '0 -5 10 10')
@@ -106,134 +78,88 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({ data, width = 1400, height 
       .scaleExtent([0.5, 3])
       .on('zoom', (event) => g.attr('transform', event.transform)));
 
-    const chartWidth = width - margin.left - margin.right;
-    const chartHeight = height - margin.top - margin.bottom;
-    const maxDepth = hierarchy(root).height;
-    const levelHeight = chartHeight / (maxDepth + 2);
-
-    const treeLayout = tree<Node>().size([chartWidth, chartHeight]).separation((a, b) => (a.parent === b.parent ? 12 : 15));
-
-    const normalizeNode = (node: Node): Node => ({
-      ...node,
-      children: node.children || []
-    });
-
-    const normalizedRoot = normalizeNode(root);
-    const treeData: HierarchyPointNode<Node> = treeLayout(hierarchy(normalizedRoot));
-
-    console.log('Hierarchy descendants:', treeData.descendants().map(d => d.data.id));
-
+    // Calculate node positions based on edges
     const nodePositions = new Map<string, { x: number; y: number }>();
-    treeData.descendants().forEach(d => {
-      const adjustedY = d.y + levelHeight * 2;
-      nodePositions.set(d.data.id, { x: d.x, y: adjustedY });
-    });
+    const occupiedYLevels = new Set<number>();
+    const conclusionNode = nodes.find(node => node.type === 'conclusion') || nodes[0];
 
-    const explainEdges = edges.filter(edge => edge.type === 'explain');
-    const refuteEdges = edges.filter(edge => edge.type === 'refute');
-    const occupiedYLevels = new Set<number>(Array.from(nodePositions.values()).map(pos => Math.round(pos.y / 50) * 50));
+    // Initialize conclusion node at top center
+    nodePositions.set(conclusionNode.id, { x: chartWidth / 2, y: 0 });
+    occupiedYLevels.add(0);
 
-    const explainStagger = levelHeight;
-    explainEdges.forEach((edge, i) => {
-      const targetPos = nodePositions.get(edge.target);
-      if (targetPos) {
-        const offsetX = -300;
-        let staggerY = targetPos.y + (i - (explainEdges.length - 1) / 2) * explainStagger;
-        while (occupiedYLevels.has(Math.round(staggerY / 50) * 50)) staggerY += 50;
-        occupiedYLevels.add(Math.round(staggerY / 50) * 50);
-        const clampedY = Math.min(staggerY, chartHeight);
-        nodePositions.set(edge.source, { x: targetPos.x + offsetX, y: clampedY });
+    // Process edges to position nodes
+    const processedNodes = new Set<string>([conclusionNode.id]);
+
+    const positionNode = (nodeId: string, parentPos: { x: number; y: number }, edge: Edge, index: number) => {
+      if (processedNodes.has(nodeId)) return;
+      processedNodes.add(nodeId);
+
+      const node = nodeMap.get(nodeId);
+      if (!node) return;
+
+      let x: number, y: number;
+      if (edge.type === 'support') {
+        // Place below parent
+        x = parentPos.x;
+        y = parentPos.y + nodeSpacing;
+        while (occupiedYLevels.has(Math.round(y / nodeSpacing) * nodeSpacing)) y += nodeSpacing;
+      } else if (edge.type === 'explain') {
+        // Place to the left
+        x = parentPos.x - horizontalOffset;
+        y = parentPos.y + (index - edges.filter(e => e.type === 'explain' && e.target === edge.target).length / 2) * nodeSpacing;
+        while (occupiedYLevels.has(Math.round(y / nodeSpacing) * nodeSpacing)) y += nodeSpacing;
+      } else if (edge.type === 'refute') {
+        // Place to the right
+        x = parentPos.x + horizontalOffset + (index * nodeSpacing);
+        y = parentPos.y;
+        while (occupiedYLevels.has(Math.round(y / nodeSpacing) * nodeSpacing)) y += nodeSpacing;
+      } else {
+        x = parentPos.x;
+        y = parentPos.y + nodeSpacing;
       }
+
+      // Clamp positions
+      x = Math.max(0, Math.min(x, chartWidth));
+      y = Math.max(0, Math.min(y, chartHeight));
+      nodePositions.set(nodeId, { x, y });
+      occupiedYLevels.add(Math.round(y / nodeSpacing) * nodeSpacing);
+
+      // Process child edges
+      edges.filter(e => e.target === nodeId).forEach((childEdge, i) => {
+        positionNode(childEdge.source, { x, y }, childEdge, i);
+      });
+    };
+
+    // Start positioning from conclusion
+    edges.filter(e => e.target === conclusionNode.id).forEach((edge, i) => {
+      positionNode(edge.source, nodePositions.get(conclusionNode.id)!, edge, i);
     });
 
-    refuteEdges.forEach((edge, i) => {
-      const targetPos = nodePositions.get(edge.target);
-      const sourcePos = nodePositions.get(edge.source);
-      if (targetPos && sourcePos) {
-        const nodesAtSamePosition = Array.from(nodePositions.entries())
-          .filter(([id, pos]) => id !== edge.source && Math.abs(pos.x - sourcePos.x) < 10 && Math.abs(pos.y - sourcePos.y) < 10);
-        let adjustedY = sourcePos.y;
-        if (nodesAtSamePosition.length > 0) {
-          adjustedY = sourcePos.y + 50;
-          while (occupiedYLevels.has(Math.round(adjustedY / 50) * 50)) adjustedY += 50;
-          occupiedYLevels.add(Math.round(adjustedY / 50) * 50);
-        }
-
-        const offsetX = 200 + (i * 150);
-        let adjustedX = targetPos.x + offsetX;
-        const allXPositionsAtY = Array.from(nodePositions.values())
-          .filter(pos => Math.abs(pos.y - adjustedY) < 10)
-          .map(pos => pos.x);
-        while (allXPositionsAtY.some(x => Math.abs(x - adjustedX) < 100)) adjustedX += 50;
-        const clampedY = Math.min(adjustedY, chartHeight);
-        nodePositions.set(edge.source, { x: adjustedX, y: clampedY });
-
-        const sourceNode = nodeMap.get(edge.source);
-        if (sourceNode?.children) {
-          sourceNode.children.forEach((child, childIndex) => {
-            const childY = clampedY + levelHeight * (childIndex + 1);
-            const childX = adjustedX + (childIndex + 1) * 50;
-            nodePositions.set(child.id, { x: childX, y: childY });
-            occupiedYLevels.add(Math.round(childY / 50) * 50);
-          });
-        }
-      }
-    });
-
-    const x2Pos = nodePositions.get('X2') || { x: 400, y: 400 };
-    nodePositions.set('R2', { x: x2Pos.x + 200, y: x2Pos.y });
-    nodePositions.set('E3', { x: x2Pos.x + 250, y: x2Pos.y + levelHeight });
-
-    const positionArray = Array.from(nodePositions.entries());
-    for (let i = 0; i < positionArray.length; i++) {
-      const [id1, pos1] = positionArray[i];
-      for (let j = i + 1; j < positionArray.length; j++) {
-        const [id2, pos2] = positionArray[j];
-        if (Math.abs(pos1.x - pos2.x) < 50 && Math.abs(pos1.y - pos2.y) < 50) {
-          let adjustedY = pos2.y + 50;
-          while (occupiedYLevels.has(Math.round(adjustedY / 50) * 50)) adjustedY += 50;
-          occupiedYLevels.add(Math.round(adjustedY / 50) * 50);
-          nodePositions.set(id2, { x: pos2.x + 50, y: adjustedY });
-        }
-      }
-    }
-
-    nodePositions.forEach((pos, id) => {
-      const clampedX = Math.max(0, Math.min(pos.x, chartWidth));
-      const clampedY = Math.max(0, Math.min(pos.y, chartHeight));
-      nodePositions.set(id, { x: clampedX, y: clampedY });
-    });
-
-    console.log('Final node positions:', Array.from(nodePositions.entries()));
-
+    // Draw edges
     const edgeGroup = g.append('g').attr('class', 'edges');
 
     edgeGroup.selectAll('.support-edge')
-      .data(treeData.links())
-      .enter()
-      .append('path')
-      .attr('d', d => {
-        const sourcePos = nodePositions.get(d.source.data.id) || { x: 0, y: 0 };
-        const targetPos = nodePositions.get(d.target.data.id) || { x: 0, y: 0 };
-        return `M${targetPos.x},${targetPos.y}L${sourcePos.x},${sourcePos.y}`;
-      })
-      .attr('fill', 'none')
-      .attr('stroke', 'green')
-      .attr('stroke-width', d => {
-        const edge = edges.find(e => e.source === d.target.data.id && e.target === d.source.data.id && e.type === 'support');
-        return edge?.strength === 'strong' ? 2 : 1;
-      })
-      .attr('marker-end', 'url(#arrow)');
-
-    edgeGroup.selectAll('.explain-edge')
-      .data(explainEdges)
+      .data(edges.filter(e => e.type === 'support'))
       .enter()
       .append('path')
       .attr('d', d => {
         const sourcePos = nodePositions.get(d.source) || { x: 0, y: 0 };
         const targetPos = nodePositions.get(d.target) || { x: 0, y: 0 };
-        const endX = sourcePos.x + 10;
-        return `M${targetPos.x},${targetPos.y}H${endX}V${sourcePos.y}`;
+        return `M${sourcePos.x},${sourcePos.y}L${targetPos.x},${targetPos.y}`;
+      })
+      .attr('fill', 'none')
+      .attr('stroke', 'green')
+      .attr('stroke-width', d => d.strength === 'strong' ? 2 : 1)
+      .attr('marker-end', 'url(#arrow)');
+
+    edgeGroup.selectAll('.explain-edge')
+      .data(edges.filter(e => e.type === 'explain'))
+      .enter()
+      .append('path')
+      .attr('d', d => {
+        const sourcePos = nodePositions.get(d.source) || { x: 0, y: 0 };
+        const targetPos = nodePositions.get(d.target) || { x: 0, y: 0 };
+        return `M${targetPos.x},${targetPos.y}H${sourcePos.x}V${sourcePos.y}`;
       })
       .attr('fill', 'none')
       .attr('stroke', 'gray')
@@ -241,7 +167,7 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({ data, width = 1400, height 
       .attr('stroke-dasharray', '5,5');
 
     edgeGroup.selectAll('.refute-edge')
-      .data(refuteEdges)
+      .data(edges.filter(e => e.type === 'refute'))
       .enter()
       .append('path')
       .attr('d', d => {
@@ -254,14 +180,13 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({ data, width = 1400, height 
       .attr('stroke-width', d => d.strength === 'strong' ? 2 : 1)
       .attr('marker-end', 'url(#cross)');
 
+    // Draw nodes
     const nodeGroup = g.append('g').attr('class', 'nodes');
 
     const node = nodeGroup.selectAll<SVGGElement, { data: Node; x: number; y: number }>('.node')
       .data(nodes.map(node => {
-        const pos = nodePositions.get(node.id);
-        const x = pos ? pos.x : 0;
-        const y = pos ? pos.y : 0;
-        return { data: node, x, y };
+        const pos = nodePositions.get(node.id) || { x: 0, y: 0 };
+        return { data: node, x: pos.x, y: pos.y };
       }))
       .enter()
       .append('g')
@@ -344,7 +269,7 @@ const WigmoreChart: React.FC<WigmoreChartProps> = ({ data, width = 1400, height 
         .attr('height', bbox.height + 4)
         .attr('fill', 'white');
     });
-  }, [nodes, edges, root, nodeMap]);
+  }, [nodes, edges, nodeMap]);
 
   return nodes.length === 0 ? <div>No valid data to display</div> : <svg ref={svgRef}></svg>;
 };
